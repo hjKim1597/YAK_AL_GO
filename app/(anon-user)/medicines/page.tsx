@@ -25,6 +25,8 @@ import {
   selectMedicineImage,
   MAIN_CATEGORIES,
   CATEGORY_KEY_MAP,
+  isDiseaseSearch,
+  getMedicineKeywordsForDisease,
   type SimplifiedMedicine,
 } from '@/utils/medicineFormatter';
 import { useSearchParams } from 'next/navigation';
@@ -52,13 +54,44 @@ interface ApiResponse {
   };
 }
 
+const MedicineNameWithTooltip = ({ shortName, medicineName, manufacturer }: { shortName: string; medicineName: string; manufacturer: string }) => {
+  const [show, setShow] = useState(false);
+
+  return (
+    <div
+      className="relative inline-block"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+      tabIndex={0}
+      onFocus={() => setShow(true)}
+      onBlur={() => setShow(false)}
+    >
+      {show && (
+        <div className="absolute z-50 left-0 bottom-full mb-2 min-w-[300px] max-w-[600px] bg-white border border-gray-200 shadow-lg rounded-xl px-3 py-2 text-xs text-gray-800 animate-fade-in pointer-events-none">
+          <div className="font-semibold whitespace-normal break-all">{medicineName}</div>
+          <div className="text-gray-500 whitespace-normal break-all">{manufacturer}</div>
+        </div>
+      )}
+      <span className="font-bold text-sm truncate max-w-[120px] block cursor-pointer">
+        {shortName}
+      </span>
+    </div>
+  );
+};
+
 export default function MedicinesPage() {
+  const searchParams = useSearchParams();
+  
+  // URL 파라미터에서 초기 상태 읽어오기
+  const initialSearch = searchParams.get('search') || '';
+  const initialCategory = searchParams.get('category') || 'all';
+  
   // 상태 관리
   const [medicines, setMedicines] = useState<MediBasicDto[]>([]); // 현재 페이지 데이터
   const [formattedMedicines, setFormattedMedicines] = useState<SimplifiedMedicine[]>([]); // 포맷된 데이터
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState('all');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [activeTab, setActiveTab] = useState(initialCategory);
   const [isLoading, setIsLoading] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
@@ -225,26 +258,63 @@ export default function MedicinesPage() {
   }, [sortOrder, activeTab, currentPage, searchQuery, fetchMedicinesFromApi]);
 
   /**
+   * URL 업데이트 함수
+   */
+  const updateURL = useCallback((search: string, category: string) => {
+    const url = new URL(window.location.href);
+    
+    if (search.trim()) {
+      url.searchParams.set('search', search.trim());
+    } else {
+      url.searchParams.delete('search');
+    }
+    
+    if (category && category !== 'all') {
+      url.searchParams.set('category', category);
+    } else {
+      url.searchParams.delete('category');
+    }
+    
+    // 브라우저 히스토리에 추가 (뒤로가기 지원)
+    window.history.pushState({}, '', url.toString());
+  }, []);
+
+  /**
    * 검색 실행 함수
    */
   const executeSearch = useCallback(
-    (query?: string) => {
+    (query?: string, category?: string) => {
       const searchTerm = query !== undefined ? query : searchQuery;
+      const searchCategory = category !== undefined ? category : activeTab;
 
       // 매개변수로 받은 검색어가 있으면 상태 업데이트
       if (query !== undefined) {
         setSearchQuery(query);
       }
 
+      // 매개변수로 받은 카테고리가 있으면 상태 업데이트
+      if (category !== undefined) {
+        setActiveTab(category);
+      }
+
       setCurrentPage(1);
 
-      // 🔍 검색 시에는 카테고리 필터를 적용하지 않고 전체 범위에서 검색
-      const category = searchTerm.trim() ? '전체' : CATEGORY_KEY_MAP[activeTab];
+      // URL 업데이트
+      updateURL(searchTerm, searchCategory);
 
-      fetchMedicinesFromApi(1, searchTerm.trim(), category);
+      // 🔍 검색 시 카테고리 필터 적용
+      const categoryToUse = searchCategory === 'all' ? '전체' : CATEGORY_KEY_MAP[searchCategory];
+
+      // 백엔드에서 병명 검색을 처리하므로 단순히 검색어 전달
+      fetchMedicinesFromApi(1, searchTerm.trim(), categoryToUse);
       setIsSearchModalOpen(false);
+
+      // 병명 검색 모드인 경우 콘솔에 로그 출력 (디버깅용)
+      if (searchTerm.trim() && isDiseaseSearch(searchTerm.trim())) {
+        console.log(`🔍 병명 검색: "${searchTerm}"`);
+      }
     },
-    [searchQuery, activeTab, fetchMedicinesFromApi]
+    [searchQuery, activeTab, fetchMedicinesFromApi, updateURL]
   );
 
   /**
@@ -272,6 +342,9 @@ export default function MedicinesPage() {
       // 카테고리 변경 시 검색어 초기화
       setSearchQuery('');
 
+      // URL 업데이트
+      updateURL('', newTab);
+
       const category = CATEGORY_KEY_MAP[newTab];
       const sortBy =
         sortOrder === 'asc' ? 'name_asc' : sortOrder === 'desc' ? 'name_desc' : undefined;
@@ -279,7 +352,7 @@ export default function MedicinesPage() {
       // 검색어 없이 해당 카테고리의 전체 데이터 로드
       fetchMedicinesFromApi(1, '', category, sortBy);
     },
-    [sortOrder, fetchMedicinesFromApi]
+    [sortOrder, fetchMedicinesFromApi, updateURL]
   );
 
   /**
@@ -291,6 +364,9 @@ export default function MedicinesPage() {
     setSortOrder(null);
     setActiveTab('all');
     setCurrentPage(1);
+
+    // URL 초기화
+    updateURL('', 'all');
 
     // 초기 상태로 데이터 다시 로드
     fetchMedicinesFromApi(1, '', '전체', undefined);
@@ -315,19 +391,19 @@ export default function MedicinesPage() {
    * 초기 데이터 로드 및 URL 파라미터 처리
    */
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const urlSearchQuery = searchParams.get('search');
+    // URL 파라미터에서 검색어와 카테고리 확인
+    const urlSearchQuery = searchParams.get('search') || '';
+    const urlCategory = searchParams.get('category') || 'all';
     
-    if (urlSearchQuery) {
-      // URL에서 검색어가 있으면 해당 검색어로 검색 실행
-      setSearchQuery(urlSearchQuery);
-      setActiveTab('all'); // 검색 시에는 전체 카테고리로 설정
-      fetchMedicinesFromApi(1, urlSearchQuery, '전체');
+    if (urlSearchQuery || urlCategory !== 'all') {
+      // URL에서 검색 조건이 있으면 해당 조건으로 검색 실행
+      const categoryToUse = urlCategory === 'all' ? '전체' : CATEGORY_KEY_MAP[urlCategory];
+      fetchMedicinesFromApi(1, urlSearchQuery, categoryToUse);
     } else {
-      // 검색어가 없으면 기본 데이터 로드
+      // 검색 조건이 없으면 기본 데이터 로드
       fetchMedicinesFromApi(1);
     }
-  }, [fetchMedicinesFromApi]);
+  }, [fetchMedicinesFromApi, searchParams]);
 
   /**
    * 페이지네이션 버튼 생성
@@ -355,56 +431,66 @@ export default function MedicinesPage() {
   /**
    * 의약품 카드 렌더링 함수
    */
-  const renderMedicineCard = (medicine: SimplifiedMedicine, index: number) => (
-    <Link href={`/medicines/${medicine.itemSeq}`} key={`${medicine.itemSeq}-${index}`}>
-      <Card className="hover:shadow-md transition-shadow cursor-pointer">
-        <CardContent className="p-4">
-          <div className="flex gap-4">
-            <div className="flex-shrink-0 w-20 h-20 min-w-[80px] min-h-[80px] max-w-[80px] max-h-[80px]">
-              <img
-                src={selectMedicineImage(
-                  medicine.itemSeq,
-                  medicines.find((m) => m.itemSeq === medicine.itemSeq)?.chart
-                )}
-                alt={medicine.originalName}
-                className="w-full h-full rounded-md object-cover aspect-square block"
-                style={{ width: '80px', height: '80px' }}
-              />
-            </div>
-            <div className="flex flex-col gap-2 flex-1">
-              <div className="flex items-start justify-between gap-2">
-                <h3
-                  className="font-bold text-sm truncate flex-1 min-w-0 max-w-[80px] sm:max-w-[90px] md:max-w-[100px] lg:max-w-[110px] xl:max-w-[120px]"
-                  title={medicine.originalName}
-                >
-                  {formatMedicineNameSmart(
-                    medicine.displayName,
-                    formattedMedicines.map((m) => m.displayName)
+  const renderMedicineCard = (medicine: SimplifiedMedicine, index: number) => {
+    const originalMedicine = medicines.find((m) => m.itemSeq === medicine.itemSeq);
+    return (
+      <Link href={`/medicines/${medicine.itemSeq}`} key={`${medicine.itemSeq}-${index}`}>
+        <Card className="hover:shadow-md transition-shadow cursor-pointer group">
+          <CardContent className="p-4">
+            <div className="flex gap-4">
+              <div className="flex-shrink-0 w-20 h-20 min-w-[80px] min-h-[80px] max-w-[80px] max-h-[80px]">
+                <img
+                  src={selectMedicineImage(
+                    medicine.itemSeq,
+                    originalMedicine?.chart
                   )}
-                </h3>
-                <Badge variant="outline" className="text-xs shrink-0">
-                  {medicine.category.display}
-                </Badge>
+                  alt={medicine.originalName}
+                  className="w-full h-full rounded-md object-cover aspect-square block"
+                  style={{ width: '80px', height: '80px' }}
+                />
               </div>
-              <p className="text-sm text-muted-foreground" title={medicine.originalManufacturer}>
-                {medicine.shortManufacturer}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {medicines.find((m) => m.itemSeq === medicine.itemSeq)?.etcOtcCode || '의약품'}
-              </p>
-              {medicines.find((m) => m.itemSeq === medicine.itemSeq)?.chart && (
-                <p className="text-xs text-gray-600 line-clamp-1 overflow-hidden text-ellipsis">
-                  {formatChartText(
-                    medicines.find((m) => m.itemSeq === medicine.itemSeq)?.chart || ''
-                  )}
+              <div className="flex flex-col gap-2 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <MedicineNameWithTooltip
+                    shortName={formatMedicineNameSmart(
+                      medicine.displayName,
+                      formattedMedicines.map((m) => m.displayName)
+                    )}
+                    medicineName={medicine.originalName}
+                    manufacturer={medicine.originalManufacturer}
+                  />
+                  <Badge 
+                    variant="outline" 
+                    className="text-xs shrink-0"
+                    title={`카테고리: ${medicine.category.display}`}
+                  >
+                    {medicine.category.display}
+                  </Badge>
+                </div>
+                <p 
+                  className="text-sm text-muted-foreground truncate px-1 py-0.5 rounded transition-colors" 
+                  title={medicine.originalManufacturer}
+                >
+                  {medicine.shortManufacturer}
                 </p>
-              )}
+                <p className="text-xs text-muted-foreground">
+                  {originalMedicine?.etcOtcCode || '의약품'}
+                </p>
+                {originalMedicine?.chart && (
+                  <p 
+                    className="text-xs text-gray-600 line-clamp-1 overflow-hidden text-ellipsis px-1 py-0.5 rounded transition-colors"
+                    title={originalMedicine.chart}
+                  >
+                    {formatChartText(originalMedicine.chart)}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
-    </Link>
-  );
+          </CardContent>
+        </Card>
+      </Link>
+    );
+  };
 
   return (
     <div className="container py-8">
@@ -412,7 +498,7 @@ export default function MedicinesPage() {
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold">약 검색</h1>
           <p className="text-muted-foreground">
-            약 이름, 성분, 제조사 등으로 검색하여 원하는 약을 찾아보세요.
+            약 이름, 성분, 제조사, 병명 등으로 검색하여 원하는 약을 찾아보세요.
           </p>
         </div>
 
@@ -451,7 +537,15 @@ export default function MedicinesPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center mt-4">
             <Button onClick={openSearchModal} className="flex items-center gap-2 justify-center sm:justify-start">
               <Search className="h-4 w-4" />
-              {searchQuery ? `"${searchQuery}"로 검색됨` : '약 검색하기'}
+              {searchQuery 
+                ? (() => {
+                    const isDisease = isDiseaseSearch(searchQuery);
+                    const categoryText = activeTab !== 'all' ? ` (${MAIN_CATEGORIES.find(c => c.key === activeTab)?.label})` : '';
+                    return `"${searchQuery}"${categoryText}${isDisease ? ' (병명검색)' : ''}로 검색됨`;
+                  })()
+                : activeTab !== 'all'
+                  ? `${MAIN_CATEGORIES.find(c => c.key === activeTab)?.label} 카테고리`
+                  : '약 검색하기'}
             </Button>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:gap-2">
@@ -482,6 +576,7 @@ export default function MedicinesPage() {
             searchQuery={searchQuery}
             onSearchQueryChange={handleSearchQueryChange}
             onSearch={executeSearch}
+            currentCategory={activeTab}
           />
 
           {MAIN_CATEGORIES.map((category) => (
@@ -509,7 +604,14 @@ export default function MedicinesPage() {
                         )
                       : !isLoading && (
                           <div className="col-span-full flex flex-col items-center justify-center py-12 text-center">
-                            <p className="text-muted-foreground">검색 결과가 없습니다.</p>
+                            <p className="text-muted-foreground">
+                              {searchQuery 
+                                ? `"${searchQuery}"${activeTab !== 'all' ? ` (${MAIN_CATEGORIES.find(c => c.key === activeTab)?.label})` : ''}에 대한 검색 결과가 없습니다.`
+                                : '해당 카테고리에 의약품이 없습니다.'}
+                            </p>
+                            <p className="text-sm text-muted-foreground mt-2">
+                              다른 검색어, 카테고리, 또는 병명을 시도해보세요.
+                            </p>
                           </div>
                         )}
                   </div>

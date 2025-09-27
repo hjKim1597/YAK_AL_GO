@@ -3,14 +3,18 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import CategoryIcon from '@/components/ui/CategoryIcon';
 import { Search, X } from 'lucide-react';
+import { MAIN_CATEGORIES } from '@/utils/medicineFormatter';
 
 interface SearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
-  onSearch: (query?: string) => void;
+  onSearch: (query?: string, category?: string) => void;
+  currentCategory?: string;
 }
 
 /**
@@ -22,19 +26,22 @@ const SearchModal = ({
   searchQuery,
   onSearchQueryChange,
   onSearch,
+  currentCategory = 'all',
 }: SearchModalProps) => {
   const [localQuery, setLocalQuery] = useState(searchQuery);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  // 모달이 열릴 때 현재 검색어로 초기화
+  // 모달이 열릴 때 현재 검색어와 카테고리로 초기화
   useEffect(() => {
     if (isOpen) {
       setLocalQuery(searchQuery);
+      setSelectedCategory(currentCategory);
     }
-  }, [isOpen, searchQuery]);
+  }, [isOpen, searchQuery, currentCategory]);
 
   const handleSearch = () => {
     onSearchQueryChange(localQuery);
-    onSearch(localQuery);
+    onSearch(localQuery, selectedCategory);
     onClose();
   };
 
@@ -46,14 +53,24 @@ const SearchModal = ({
 
   const handleClear = () => {
     setLocalQuery('');
+    setSelectedCategory('all');
     onSearchQueryChange('');
-    onSearch('');
+    onSearch('', 'all');
     onClose();
+  };
+
+  const handleCategorySelect = (categoryKey: string) => {
+    // 같은 카테고리를 다시 클릭하면 선택 해제 (빈 상태로 변경)
+    if (selectedCategory === categoryKey) {
+      setSelectedCategory('all');
+    } else {
+      setSelectedCategory(categoryKey);
+    }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Search className="h-5 w-5" />약 검색
@@ -61,10 +78,11 @@ const SearchModal = ({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {/* 검색어 입력 */}
           <div className="relative">
             <Input
               type="text"
-              placeholder="약 이름, 성분, 제조사를 입력하세요"
+              placeholder="약 이름, 성분, 제조사, 병명을 입력하세요"
               value={localQuery}
               onChange={(e) => setLocalQuery(e.target.value)}
               onKeyPress={handleKeyPress}
@@ -83,21 +101,61 @@ const SearchModal = ({
             )}
           </div>
 
+          {/* 카테고리 선택 */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-gray-700">카테고리 선택</h3>
+            <div className="grid grid-cols-3 gap-2">
+              {MAIN_CATEGORIES.slice(1).map((category) => (
+                <Button
+                  key={category.key}
+                  variant={selectedCategory === category.key ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => handleCategorySelect(category.key)}
+                  className="flex flex-col items-center gap-1 h-auto p-2 text-xs"
+                >
+                  <CategoryIcon
+                    src={category.icon}
+                    alt={category.label}
+                    size={20}
+                    className="w-5 h-5"
+                  />
+                  <span className="text-xs leading-tight">{category.label}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {/* 선택된 카테고리 표시 */}
+          {selectedCategory !== 'all' && (
+            <div className="flex items-center gap-2 p-2 bg-primary/10 rounded-md">
+              <span className="text-sm text-muted-foreground">선택된 카테고리:</span>
+              <Badge variant="secondary" className="flex items-center gap-1">
+                <CategoryIcon
+                  src={MAIN_CATEGORIES.find(c => c.key === selectedCategory)?.icon || ''}
+                  alt=""
+                  size={16}
+                  className="w-4 h-4"
+                />
+                {MAIN_CATEGORIES.find(c => c.key === selectedCategory)?.label}
+              </Badge>
+            </div>
+          )}
+
           <div className="flex gap-2 justify-end">
             {searchQuery && (
               <Button variant="outline" onClick={handleClear}>
                 검색 초기화
               </Button>
             )}
-            <Button onClick={handleSearch} disabled={!localQuery.trim()}>
+            <Button onClick={handleSearch} disabled={!localQuery.trim() && selectedCategory === 'all'}>
               <Search className="h-4 w-4 mr-2" />
               검색
             </Button>
           </div>
 
-          {/* 최근 검색어나 추천 검색어를 여기에 추가할 수 있음 */}
+          {/* 검색 팁 */}
           <div className="text-sm text-muted-foreground">
-            <p>💡 팁 : 의약품명의 일부만 입력해도 검색됩니다</p>
+            <p>💡 팁 : 의약품명, 성분, 제조사, 병명, 카테고리명으로 검색할 수 있습니다</p>
           </div>
         </div>
       </DialogContent>
